@@ -1,0 +1,91 @@
+@import "tailwindcss";
+
+/*
+  Nubix · sistema de diseño
+  Paleta: azul (blue), azul marino (slate, retintado), celeste (sky) y verde agua (teal).
+  Se redefine "slate" como una escala de grises azulados para que toda la UI tome el tono marino.
+*/
+@theme {
+  --font-sans: "Inter", ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+
+  --color-slate-50: #f4f8fd;
+  --color-slate-100: #e8f0fa;
+  --color-slate-200: #d5e2f1;
+  --color-slate-300: #b3c6dc;
+  --color-slate-400: #8399b3;
+  --color-slate-500: #5b7391;
+  --color-slate-600: #43597a;
+  --color-slate-700: #2b4163;
+  --color-slate-800: #152a4d;
+  --color-slate-900: #0b1b36;
+  --color-slate-950: #060f22;
+
+  --shadow-card: 0 1px 2px rgb(11 27 54 / 0.04), 0 10px 30px -10px rgb(11 27 54 / 0.12);
+  --shadow-float: 0 30px 70px -20px rgb(11 27 54 / 0.45);
+  --shadow-glow: 0 10px 24px -8px rgb(29 111 242 / 0.6);
+
+  --animate-pop: pop 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+  --animate-rise: rise 0.35s ease-out;
+  @keyframes pop {
+    from { opacity: 0; transform: scale(0.94) translateY(8px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: none; }
+  }
+}
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body {
+    @apply text-slate-800 antialiased;
+    font-variant-numeric: tabular-nums;
+    background-color: #f1f6fc;
+    background-image:
+      radial-gradient(60rem 36rem at 90% -10%, rgb(125 211 252 / 0.45), transparent 60%),
+      radial-gradient(48rem 32rem at 100% 100%, rgb(45 212 191 / 0.22), transparent 60%),
+      radial-gradient(44rem 30rem at 30% 110%, rgb(59 130 246 / 0.16), transparent 60%);
+    background-attachment: fixed;
+  }
+  ::selection { background: rgb(59 130 246 / 0.25); }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: rgb(131 153 179 / 0.4); border-radius: 999px; border: 3px solid transparent; background-clip: content-box; }
+  ::-webkit-scrollbar-thumb:hover { background: rgb(131 153 179 / 0.7); border: 3px solid transparent; background-clip: content-box; }
+  button { cursor: pointer; }
+  button:disabled { cursor: not-allowed; }
+  input[type="number"]::-webkit-inner-spin-button { opacity: 0.4; }
+}
+
+@layer components {
+  .card {
+    @apply rounded-3xl border border-white/80 bg-white/85 shadow-card backdrop-blur-xl;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold whitespace-nowrap transition duration-150 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-45 disabled:active:scale-100;
+  }
+  .btn-primary { @apply bg-gradient-to-r from-blue-600 to-sky-500 text-white shadow-glow hover:brightness-110; }
+  .btn-aqua { @apply bg-gradient-to-r from-teal-500 to-sky-500 text-white shadow-[0_10px_24px_-8px_rgb(20_184_166/0.6)] hover:brightness-110; }
+  .btn-dark { @apply bg-slate-900 text-white hover:bg-slate-800; }
+  .btn-soft { @apply bg-blue-50 text-blue-700 hover:bg-blue-100; }
+  .btn-ghost { @apply border border-slate-200 bg-white text-slate-700 hover:bg-slate-50; }
+  .btn-sm { @apply px-3.5 py-1.5 text-xs; }
+
+  .input {
+    @apply w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/15;
+  }
+  .field-label { @apply mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500; }
+
+  .chip { @apply inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold; }
+  .chip-ok { @apply bg-teal-50 text-teal-700; }
+  .chip-warn { @apply bg-amber-50 text-amber-700; }
+  .chip-bad { @apply bg-red-50 text-red-600; }
+  .chip-info { @apply bg-blue-50 text-blue-700; }
+
+  .th { @apply px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500; }
+  .kpi-label { @apply text-xs font-semibold uppercase tracking-wider text-slate-500; }
+  .section-title { @apply text-base font-bold tracking-tight text-slate-900; }
+  .section-sub { @apply text-sm text-slate-500; }
+  .icon-tile { @apply flex shrink-0 items-center justify-center rounded-2xl; }
+}
