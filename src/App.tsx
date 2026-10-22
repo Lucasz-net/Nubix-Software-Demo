@@ -1,5 +1,6 @@
 import Sidebar from "./components/Sidebar";
 import Header from "./components/Header";
+import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import POS from "./pages/POS";
 import Inventory from "./pages/Inventory";
@@ -7,8 +8,10 @@ import Cash from "./pages/Cash";
 import Customers from "./pages/Customers";
 import Restock from "./pages/Restock";
 import Sales from "./pages/Sales";
+import Invoices from "./pages/Invoices";
 import Stats from "./pages/Stats";
-import { useStore } from "./store/useStore";
+import { useCurrentUser, useStore } from "./store/useStore";
+import { HOME, canSee } from "./lib/roles";
 import "./index.css";
 
 const screens = {
@@ -19,11 +22,18 @@ const screens = {
   customers: Customers,
   restock: Restock,
   sales: Sales,
+  invoices: Invoices,
   stats: Stats,
 };
 
 export default function App() {
-  const screen = useStore((s) => s.screen);
+  const user = useCurrentUser();
+  const requested = useStore((s) => s.screen);
+
+  if (!user) return <Login />;
+
+  // Si la pantalla no le corresponde al rol, se muestra su pantalla de inicio.
+  const screen = canSee(user.role, requested) ? requested : HOME[user.role];
   const Screen = screens[screen];
 
   return (

@@ -1,81 +1,16 @@
 import { useMemo, useState } from "react";
-import type { ChangeEvent, FormEvent } from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown, Pencil, Plus, Search, Trash2, TrendingDown, TrendingUp } from "lucide-react";
-import { useStore } from "../store/useStore";
+import type { FormEvent } from "react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Eye, Pencil, Plus, Search, Trash2, TrendingDown, TrendingUp } from "lucide-react";
+import { useCurrentUser, useStore } from "../store/useStore";
 import Modal from "../components/Modal";
 import Toast from "../components/Toast";
+import ProductForm from "../components/ProductForm";
 import { CATEGORIES } from "../data/mock";
 import { formatMoney, margin } from "../lib/format";
 import { newPrice } from "../lib/pricing";
 import { categoryStyle } from "../lib/categories";
 import type { Rounding } from "../lib/pricing";
 import type { Product } from "../types";
-
-const emptyForm: Omit<Product, "id"> = {
-  barcode: "",
-  name: "",
-  category: CATEGORIES[0],
-  cost: 0,
-  price: 0,
-  stock: 0,
-  minStock: 5,
-};
-
-function ProductForm({ product, onClose, onDone }: { product: Product | null; onClose: () => void; onDone: (msg: string) => void }) {
-  const { addProduct, updateProduct } = useStore.getState();
-  const [form, setForm] = useState<Omit<Product, "id">>(product ?? emptyForm);
-
-  const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) =>
-    setForm((f) => ({ ...f, [key]: value }));
-  const num = (key: "cost" | "price" | "stock" | "minStock") => ({
-    type: "number" as const,
-    min: 0,
-    required: true,
-    value: form[key],
-    onChange: (e: ChangeEvent<HTMLInputElement>) => set(key, Number(e.target.value)),
-    className: "input",
-  });
-
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    if (product) updateProduct({ ...form, id: product.id });
-    else addProduct(form);
-    onDone(product ? "Producto actualizado" : "Producto creado");
-  };
-
-  const m = margin(form.cost, form.price);
-
-  return (
-    <form onSubmit={submit} className="grid grid-cols-2 gap-4">
-      <label>
-        <span className="field-label">Código de barras</span>
-        <input required value={form.barcode} onChange={(e) => set("barcode", e.target.value)} className="input" />
-      </label>
-      <label>
-        <span className="field-label">Categoría</span>
-        <select value={form.category} onChange={(e) => set("category", e.target.value)} className="input">
-          {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
-        </select>
-      </label>
-      <label className="col-span-2">
-        <span className="field-label">Nombre del producto</span>
-        <input required value={form.name} onChange={(e) => set("name", e.target.value)} className="input" />
-      </label>
-      <label><span className="field-label">Precio de costo ($)</span><input {...num("cost")} /></label>
-      <label><span className="field-label">Precio de venta ($)</span><input {...num("price")} /></label>
-      <div className="col-span-2 flex items-center justify-between rounded-2xl bg-gradient-to-r from-blue-50 to-teal-50 px-5 py-3 text-sm">
-        <span className="text-slate-600">Ganancia por unidad <b className="ml-1 text-slate-900">{formatMoney(form.price - form.cost)}</b></span>
-        <span className={`chip ${m < 15 ? "chip-warn" : "chip-ok"}`}>Margen {m.toFixed(0)}%</span>
-      </div>
-      <label><span className="field-label">Stock actual (unidades)</span><input {...num("stock")} /></label>
-      <label><span className="field-label">Avisar cuando queden</span><input {...num("minStock")} /></label>
-      <div className="col-span-2 mt-2 flex justify-end gap-3">
-        <button type="button" onClick={onClose} className="btn btn-ghost">Cancelar</button>
-        <button className="btn btn-primary">{product ? "Guardar cambios" : "Crear producto"}</button>
-      </div>
-    </form>
-  );
-}
 
 const ROUNDINGS: { value: Rounding; label: string }[] = [
   { value: 0, label: "Al peso" },
@@ -213,14 +148,15 @@ const STOCK_FILTERS: { id: StockFilter; label: string; tone: string }[] = [
   { id: "out", label: "Sin stock", tone: "bg-red-500" },
 ];
 
-const COLUMNS: { label: string; key: SortKey | null; right?: boolean }[] = [
+// adminOnly: el cajero consulta precio y stock, pero no ve costos ni puede editar.
+const COLUMNS: { label: string; key: SortKey | null; right?: boolean; adminOnly?: boolean }[] = [
   { label: "Producto", key: "name" },
   { label: "Categoría", key: "category" },
-  { label: "Costo", key: "cost", right: true },
+  { label: "Costo", key: "cost", right: true, adminOnly: true },
   { label: "Precio de venta", key: "price", right: true },
-  { label: "Margen", key: "margin", right: true },
+  { label: "Margen", key: "margin", right: true, adminOnly: true },
   { label: "Stock", key: "stock" },
-  { label: "", key: null },
+  { label: "", key: null, adminOnly: true },
 ];
 
 const sortValue = (p: Product, key: SortKey) => (key === "margin" ? margin(p.cost, p.price) : p[key]);
@@ -234,6 +170,8 @@ const pillCount = (active: boolean) => `rounded-full px-1.5 text-[11px] ${active
 export default function Inventory() {
   const products = useStore((s) => s.products);
   const deleteProduct = useStore((s) => s.deleteProduct);
+  const isAdmin = useCurrentUser()?.role === "admin";
+  const columns = COLUMNS.filter((c) => isAdmin || !c.adminOnly);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<string | null>(null);
   const [stockFilter, setStockFilter] = useState<StockFilter>("all");
@@ -291,14 +229,18 @@ export default function Inventory() {
             <button onClick={clearFilters} className="text-xs font-semibold text-blue-600 hover:underline">Limpiar filtros</button>
           )}
         </div>
-        <div className="flex gap-3">
-          <button onClick={() => setModal("price")} className="btn btn-aqua">
-            <TrendingUp size={18} /> Aumentar Precios
-          </button>
-          <button onClick={() => setModal("new")} className="btn btn-primary">
-            <Plus size={18} /> Nuevo Producto
-          </button>
-        </div>
+        {isAdmin ? (
+          <div className="flex gap-3">
+            <button onClick={() => setModal("price")} className="btn btn-aqua">
+              <TrendingUp size={18} /> Aumentar Precios
+            </button>
+            <button onClick={() => setModal("new")} className="btn btn-primary">
+              <Plus size={18} /> Nuevo Producto
+            </button>
+          </div>
+        ) : (
+          <span className="chip chip-info px-3.5 py-1.5 text-sm"><Eye size={15} /> Solo consulta de precios y stock</span>
+        )}
       </div>
 
       <div className="card space-y-3 p-4">
@@ -334,7 +276,7 @@ export default function Inventory() {
         <table className="w-full text-sm">
           <thead className="border-b border-slate-100 bg-slate-50/70">
             <tr>
-              {COLUMNS.map((c, i) => {
+              {columns.map((c, i) => {
                 const active = c.key !== null && sort.key === c.key;
                 const SortIcon = !active ? ArrowUpDown : sort.dir === 1 ? ArrowUp : ArrowDown;
                 return (
@@ -369,15 +311,17 @@ export default function Inventory() {
                     </div>
                   </td>
                   <td className="px-5 py-3"><span className="chip chip-info">{p.category}</span></td>
-                  <td className="px-5 py-3 text-right text-slate-500">{formatMoney(p.cost)}</td>
+                  {isAdmin && <td className="px-5 py-3 text-right text-slate-500">{formatMoney(p.cost)}</td>}
                   <td className="px-5 py-3 text-right text-base font-bold text-slate-900">{formatMoney(p.price)}</td>
-                  <td className="px-5 py-3 text-right"><span className={`chip ${m < 15 ? "chip-warn" : "chip-ok"}`}>{m.toFixed(0)}%</span></td>
+                  {isAdmin && (
+                    <td className="px-5 py-3 text-right"><span className={`chip ${m < 15 ? "chip-warn" : "chip-ok"}`}>{m.toFixed(0)}%</span></td>
+                  )}
                   <td className="px-5 py-3">
                     <span className={`chip ${p.stock === 0 ? "chip-bad" : p.stock <= p.minStock ? "chip-warn" : "chip-ok"}`}>
                       {p.stock === 0 ? "Sin stock" : `${p.stock} u.`}
                     </span>
                   </td>
-                  <td className="px-5 py-3">
+                  {isAdmin && <td className="px-5 py-3">
                     <div className="flex justify-end gap-1">
                       <button onClick={() => setModal(p)} aria-label="Editar" className="rounded-full p-2 text-slate-400 transition hover:bg-blue-50 hover:text-blue-600">
                         <Pencil size={16} />
@@ -390,13 +334,13 @@ export default function Inventory() {
                         <Trash2 size={16} />
                       </button>
                     </div>
-                  </td>
+                  </td>}
                 </tr>
               );
             })}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={7} className="py-12 text-center text-slate-500">
+                <td colSpan={columns.length} className="py-12 text-center text-slate-500">
                   No hay productos que coincidan.{" "}
                   {hasFilters && <button onClick={clearFilters} className="font-semibold text-blue-600 hover:underline">Limpiar filtros</button>}
                 </td>

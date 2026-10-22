@@ -1,6 +1,15 @@
-export type Screen = "dashboard" | "pos" | "inventory" | "cash" | "customers" | "restock" | "sales" | "stats";
+export type Screen = "dashboard" | "pos" | "inventory" | "cash" | "customers" | "restock" | "sales" | "invoices" | "stats";
 
-export type PayMethod = "efectivo" | "debito" | "mercadopago" | "transferencia" | "fiado";
+export type Role = "admin" | "cajero";
+
+export interface User {
+  id: string;
+  name: string;
+  role: Role;
+  pin: string;
+}
+
+export type PayMethod ="efectivo" | "debito" | "mercadopago" | "transferencia" | "fiado";
 
 export interface Product {
   id: string;
@@ -33,8 +42,12 @@ export interface Sale {
   total: number;
   payment: PayMethod;
   customerId?: string;
+  userId?: string; // quién cobró
   voidedAt?: string; // ISO — si está, la venta fue anulada
   voidReason?: string;
+  voidedBy?: string;
+  invoice?: Invoice; // factura emitida por la venta
+  creditNote?: Invoice; // nota de crédito que la anuló
 }
 
 export interface Customer {
@@ -51,6 +64,7 @@ export interface CustomerMovement {
   type: "compra" | "pago" | "anulacion";
   amount: number;
   method?: PayMethod;
+  userId?: string;
 }
 
 export interface CashMovement {
@@ -59,6 +73,8 @@ export interface CashMovement {
   type: "ingreso" | "egreso";
   amount: number;
   note: string;
+  userId?: string;
+  authorizedBy?: string; // dueño que autorizó con su PIN (egresos de un cajero)
 }
 
 export interface CashSession {
@@ -66,6 +82,7 @@ export interface CashSession {
   openedAt: string;
   opening: number;
   movements: CashMovement[];
+  openedBy?: string;
 }
 
 export interface ClosedCash {
@@ -76,9 +93,51 @@ export interface ClosedCash {
   expected: number;
   counted: number;
   collected: number;
+  openedBy?: string;
+  closedBy?: string;
 }
 
 export interface CashState {
   current: CashSession | null;
   history: ClosedCash[];
+}
+
+// --- Facturación electrónica (simulada en la demo: no se envía a ARCA) ---
+
+export type InvoiceLetter = "A" | "B" | "C";
+
+// Tipo de documento del receptor, con los códigos de ARCA: 80 CUIT, 96 DNI, 99 consumidor final sin identificar.
+export type DocType = 80 | 96 | 99;
+
+export interface Invoice {
+  letter: InvoiceLetter;
+  pos: number; // punto de venta
+  number: number;
+  date: string; // ISO
+  cae: string; // vence a los 10 días de la fecha (caeDueOf)
+  docType: DocType;
+  docNumber: string; // "0" para consumidor final
+  customerName?: string;
+}
+
+export type FiscalCondition = "monotributo" | "ri";
+
+export interface FiscalSettings {
+  businessName: string;
+  cuit: string; // 11 dígitos, sin guiones
+  address: string;
+  startDate: string; // inicio de actividades, AAAA-MM-DD
+  condition: FiscalCondition;
+  category: string; // categoría del monotributo (A a K)
+  annualLimit: number; // tope de facturación anual de la categoría
+  pos: number;
+  autoInvoice: boolean; // facturar cada venta al cobrar
+}
+
+// Datos del receptor elegidos al cobrar.
+export interface InvoiceTarget {
+  letter?: InvoiceLetter; // solo para Responsable Inscripto: "A" a empresas
+  docType: DocType;
+  docNumber: string;
+  customerName?: string;
 }

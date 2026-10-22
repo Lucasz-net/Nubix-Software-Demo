@@ -1,12 +1,16 @@
 import { useMemo, useState } from "react";
-import { Ban, ChevronRight, Download, Receipt, Search, TrendingUp, Undo2, Wallet } from "lucide-react";
+import { Ban, ChevronRight, Download, FileText, Receipt, Search, TrendingUp, Undo2, Wallet } from "lucide-react";
 import { useStore } from "../store/useStore";
 import Modal from "../components/Modal";
 import Toast from "../components/Toast";
+import InvoiceModal from "../components/InvoiceModal";
 import { downloadCsv } from "../lib/csv";
 import { formatDateTime, formatMoney, splitIva } from "../lib/format";
 import { PAY_LABEL, PAY_METHODS } from "../lib/payments";
 import { daysBack, saleProfit, startOfDay, totalsOf } from "../lib/sales";
+import { userName } from "../lib/roles";
+import { CONSUMIDOR_FINAL, formatInvoiceNumber, invoiceLabel, receiverLabel } from "../lib/invoice";
+import type { InvoiceKind } from "../lib/invoice";
 import type { PayMethod, Sale } from "../types";
 
 type Period = "today" | "yesterday" | "7" | "30" | "custom";
@@ -44,13 +48,16 @@ function rangeOf(period: Period, from: string, to: string): [number, number] {
   }
 }
 
-function SaleDetail({ sale, customerName, onClose, onVoided }: {
+function SaleDetail({ sale, customerName, seller, onClose, onVoided, onShowInvoice }: {
   sale: Sale;
   customerName?: string;
+  seller: string;
   onClose: () => void;
   onVoided: (msg: string) => void;
+  onShowInvoice: (kind: InvoiceKind) => void;
 }) {
   const voidSale = useStore((s) => s.voidSale);
+  const invoiceSale = useStore((s) => s.invoiceSale);
   const [confirming, setConfirming] = useState(false);
   const [reason, setReason] = useState(REASONS[0]);
   const [error, setError] = useState("");
@@ -58,10 +65,12 @@ function SaleDetail({ sale, customerName, onClose, onVoided }: {
   const { net, iva } = splitIva(sale.total);
   const profit = saleProfit(sale);
   const voided = !!sale.voidedAt;
+  const users = useStore((s) => s.users);
+  const voidedBy = sale.voidedBy ? userName(users, sale.voidedBy) : "";
 
   const confirmVoid = () => {
     const res = voidSale(sale.id, reason);
-    if (res.ok) onVoided(`Venta ${sale.id} anulada · stock devuelto`);
+    if (res.ok) onVoided(`Venta ${sale.id} anulada · stock devuelto${sale.invoice ? " · nota de crédito emitida" : ""}`);
     else setError(res.error);
   };
 
@@ -69,14 +78,49 @@ function SaleDetail({ sale, customerName, onClose, onVoided }: {
     <Modal title={`Venta ${sale.id}`} subtitle={formatDateTime(sale.date)} onClose={onClose}>
       <div className="space-y-5">
         <div className="flex flex-wrap items-center gap-2">
+          <span className="chip chip-ok">Atendió {seller}</span>
           <span className="chip chip-info">{PAY_LABEL[sale.payment]}</span>
           {customerName && <span className="chip chip-warn">A cuenta de {customerName}</span>}
           {voided && <span className="chip chip-bad">Anulada</span>}
         </div>
 
+        <div className="space-y-3 rounded-2xl border border-slate-200 p-4 text-sm">
+          <p className="kpi-label">Facturación</p>
+          {sale.invoice ? (
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-semibold text-slate-800">{invoiceLabel(sale.invoice)}</p>
+                <p className="truncate text-xs text-slate-500">CAE {sale.invoice.cae} · {sale.invoice.customerName ?? receiverLabel(sale.invoice)}</p>
+              </div>
+              <button onClick={() => onShowInvoice("factura")} className="btn btn-soft btn-sm shrink-0"><FileText size={14} /> Ver factura</button>
+            </div>
+          ) : voided ? (
+            <p className="text-slate-500">La venta no se había facturado.</p>
+          ) : (
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-slate-500">Esta venta todavía no tiene factura.</p>
+              <button
+                onClick={() => invoiceSale(sale.id, CONSUMIDOR_FINAL) && onShowInvoice("factura")}
+                className="btn btn-primary btn-sm shrink-0"
+              >
+                <FileText size={14} /> Facturar a consumidor final
+              </button>
+            </div>
+          )}
+          {sale.creditNote && (
+            <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
+              <div className="min-w-0">
+                <p className="font-semibold text-slate-800">{invoiceLabel(sale.creditNote, "nc")}</p>
+                <p className="truncate text-xs text-slate-500">CAE {sale.creditNote.cae} · anula la factura</p>
+              </div>
+              <button onClick={() => onShowInvoice("nc")} className="btn btn-soft btn-sm shrink-0"><FileText size={14} /> Ver nota de crédito</button>
+            </div>
+          )}
+        </div>
+
         {voided && (
           <p className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">
-            Anulada el {formatDateTime(sale.voidedAt!)}{sale.voidReason ? ` · ${sale.voidReason}` : ""}. No suma en las ventas, la caja ni las estadísticas.
+            Anulada el {formatDateTime(sale.voidedAt!)}{voidedBy ? ` por ${voidedBy}` : ""}{sale.voidReason ? ` · ${sale.voidReason}` : ""}. No suma en las ventas, la caja ni las estadísticas.
           </p>
         )}
 
@@ -126,7 +170,7 @@ function SaleDetail({ sale, customerName, onClose, onVoided }: {
           <div className="space-y-3 rounded-2xl border border-red-200 bg-red-50/60 p-4">
             <p className="text-sm font-semibold text-red-700">¿Anular esta venta?</p>
             <p className="text-xs text-red-700/80">
-              Se devuelve el stock{sale.payment === "fiado" ? ", se descuenta la deuda del cliente" : sale.payment === "efectivo" ? " y se registra la devolución del efectivo en la caja" : ""}. No se puede deshacer.
+              Se devuelve el stock{sale.payment === "fiado" ? ", se descuenta la deuda del cliente" : sale.payment === "efectivo" ? ", se registra la devolución del efectivo en la caja" : ""}{sale.invoice ? " y se emite la nota de crédito que anula la factura" : ""}. No se puede deshacer.
             </p>
             <label className="block">
               <span className="field-label">Motivo</span>
@@ -157,15 +201,18 @@ function SaleDetail({ sale, customerName, onClose, onVoided }: {
 export default function Sales() {
   const sales = useStore((s) => s.sales);
   const customers = useStore((s) => s.customers);
+  const users = useStore((s) => s.users);
 
   const [period, setPeriod] = useState<Period>("7");
   const [from, setFrom] = useState(toInput(daysBack(6)));
   const [to, setTo] = useState(toInput(new Date()));
   const [payment, setPayment] = useState<PayMethod | "all">("all");
   const [status, setStatus] = useState<Status>("all");
+  const [seller, setSeller] = useState<string>("all");
   const [query, setQuery] = useState("");
   const [shown, setShown] = useState(PAGE);
   const [openId, setOpenId] = useState<string | null>(null);
+  const [invoiceView, setInvoiceView] = useState<{ saleId: string; kind: InvoiceKind } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   const customerName = (id?: string) => customers.find((c) => c.id === id)?.name;
@@ -180,30 +227,33 @@ export default function Sales() {
         if (payment !== "all" && s.payment !== payment) return false;
         if (status === "ok" && s.voidedAt) return false;
         if (status === "voided" && !s.voidedAt) return false;
-        return !q || s.id.toLowerCase().includes(q) || s.items.some((i) => i.name.toLowerCase().includes(q));
+        if (seller !== "all" && s.userId !== seller) return false;
+        return !q || s.id.toLowerCase().includes(q) || (!!s.invoice && formatInvoiceNumber(s.invoice).includes(q)) || s.items.some((i) => i.name.toLowerCase().includes(q));
       })
       .reverse();
-  }, [sales, period, from, to, payment, status, query]);
+  }, [sales, period, from, to, payment, status, seller, query]);
 
   const sum = totalsOf(rows);
   const open = sales.find((s) => s.id === openId) ?? null;
-  const hasFilters = payment !== "all" || status !== "all" || query !== "";
+  const hasFilters = payment !== "all" || status !== "all" || seller !== "all" || query !== "";
 
-  const reset = () => { setPayment("all"); setStatus("all"); setQuery(""); setShown(PAGE); };
+  const reset = () => { setPayment("all"); setStatus("all"); setSeller("all"); setQuery(""); setShown(PAGE); };
   const pick = <T,>(set: (v: T) => void) => (v: T) => { set(v); setShown(PAGE); };
 
   const exportCsv = () => {
     downloadCsv(
       `ventas-nubix-${toInput(new Date())}.csv`,
-      ["N° de venta", "Fecha", "Hora", "Medio de pago", "Cliente", "Productos", "Total", "Ganancia", "Estado"],
+      ["N° de venta", "Fecha", "Hora", "Comprobante", "Medio de pago", "Cliente", "Atendió", "Productos", "Total", "Ganancia", "Estado"],
       rows.map((s) => {
         const d = new Date(s.date);
         return [
           s.id,
           d.toLocaleDateString("es-AR"),
           d.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }),
+          s.invoice ? invoiceLabel(s.invoice) : "",
           PAY_LABEL[s.payment],
           customerName(s.customerId) ?? "",
+          userName(users, s.userId),
           s.items.map((i) => `${i.qty} x ${i.name}`).join(" | "),
           s.total,
           saleProfit(s),
@@ -261,7 +311,7 @@ export default function Sales() {
             <input
               value={query}
               onChange={(e) => pick(setQuery)(e.target.value)}
-              placeholder="Buscar N° de venta o producto..."
+              placeholder="Buscar N° de venta, factura o producto..."
               className="w-full rounded-full border border-slate-200 bg-white py-2.5 pl-10 pr-4 text-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-500/15"
             />
           </div>
@@ -295,6 +345,18 @@ export default function Sales() {
               </button>
             ))}
           </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="kpi-label mr-1">Atendió</span>
+            {([["all", "Todos"], ...users.map((u) => [u.id, u.name.split(" ")[0]])] as [string, string][]).map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => pick(setSeller)(id)}
+                className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition active:scale-95 ${seller === id ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           {hasFilters && (
             <button onClick={reset} className="text-xs font-semibold text-blue-600 hover:underline">Limpiar filtros</button>
           )}
@@ -309,6 +371,7 @@ export default function Sales() {
               <th className="th">Fecha y hora</th>
               <th className="th">Productos</th>
               <th className="th">Medio de pago</th>
+              <th className="th">Atendió</th>
               <th className="th text-right">Total</th>
               <th className="th text-right">Ganancia</th>
               <th className="th" />
@@ -320,8 +383,11 @@ export default function Sales() {
               const name = customerName(s.customerId);
               return (
                 <tr key={s.id} onClick={() => setOpenId(s.id)} className={`cursor-pointer transition hover:bg-blue-50/40 ${s.voidedAt ? "opacity-60" : ""}`}>
-                  <td className="px-5 py-3 font-semibold text-slate-900">{s.id}</td>
-                  <td className="px-5 py-3 text-slate-600">{formatDateTime(s.date)}</td>
+                  <td className="whitespace-nowrap px-5 py-3">
+                    <p className="font-semibold text-slate-900">{s.id}</p>
+                    {s.invoice && <p className="text-[11px] text-slate-400">Fact. {s.invoice.letter} {formatInvoiceNumber(s.invoice)}</p>}
+                  </td>
+                  <td className="whitespace-nowrap px-5 py-3 text-slate-600">{formatDateTime(s.date)}</td>
                   <td className="px-5 py-3">
                     <p className="max-w-64 truncate font-medium text-slate-800">{first.qty > 1 ? `${first.qty} × ` : ""}{first.name}</p>
                     {s.items.length > 1 && <p className="text-xs text-slate-400">+ {s.items.length - 1} producto{s.items.length > 2 ? "s" : ""} más</p>}
@@ -333,6 +399,7 @@ export default function Sales() {
                       {s.voidedAt && <span className="chip chip-bad">Anulada</span>}
                     </div>
                   </td>
+                  <td className="whitespace-nowrap px-5 py-3 text-slate-600">{userName(users, s.userId).split(" ")[0]}</td>
                   <td className={`px-5 py-3 text-right text-base font-bold text-slate-900 ${s.voidedAt ? "line-through" : ""}`}>{formatMoney(s.total)}</td>
                   <td className="px-5 py-3 text-right font-semibold text-teal-700">{s.voidedAt ? "—" : formatMoney(saleProfit(s))}</td>
                   <td className="px-5 py-3 text-right text-slate-300"><ChevronRight size={18} /></td>
@@ -340,7 +407,7 @@ export default function Sales() {
               );
             })}
             {rows.length === 0 && (
-              <tr><td colSpan={7} className="py-14 text-center text-slate-500">No hay ventas con estos filtros.</td></tr>
+              <tr><td colSpan={8} className="py-14 text-center text-slate-500">No hay ventas con estos filtros.</td></tr>
             )}
           </tbody>
         </table>
@@ -358,10 +425,13 @@ export default function Sales() {
         <SaleDetail
           sale={open}
           customerName={customerName(open.customerId)}
+          seller={userName(users, open.userId)}
           onClose={() => setOpenId(null)}
           onVoided={(msg) => { setOpenId(null); setToast(msg); }}
+          onShowInvoice={(kind) => setInvoiceView({ saleId: open.id, kind })}
         />
       )}
+      {invoiceView && <InvoiceModal saleId={invoiceView.saleId} kind={invoiceView.kind} onClose={() => setInvoiceView(null)} />}
       {toast && <Toast title={toast} onDone={() => setToast(null)} />}
     </div>
   );

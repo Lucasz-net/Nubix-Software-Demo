@@ -2,23 +2,35 @@ import { useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { ArrowDownCircle, ArrowUpCircle, Banknote, HandCoins, Lock, LockOpen, Receipt, Wallet } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useStore } from "../store/useStore";
+import { useCurrentUser, useStore } from "../store/useStore";
 import Modal from "../components/Modal";
 import Toast from "../components/Toast";
+import OwnerPinModal from "../components/OwnerPinModal";
 import { COLLECT_METHODS } from "../lib/payments";
 import { summarizeSession } from "../lib/cash";
 import { formatDateTime, formatMoney, formatTime } from "../lib/format";
+import { userName } from "../lib/roles";
 
 function MovementForm({ type, onClose, onDone }: { type: "ingreso" | "egreso"; onClose: () => void; onDone: () => void }) {
   const addCashMovement = useStore((s) => s.addCashMovement);
+  const user = useCurrentUser();
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
+  const [askingOwner, setAskingOwner] = useState(false);
+
+  // Un cajero puede sacar plata de la caja solo con el PIN del dueño.
+  const needsOwner = type === "egreso" && user?.role !== "admin";
+
+  const save = (authorizedBy?: string) => {
+    addCashMovement(type, Number(amount), note.trim() || (type === "ingreso" ? "Ingreso" : "Egreso"), authorizedBy);
+    onDone();
+  };
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (!(Number(amount) > 0)) return;
-    addCashMovement(type, Number(amount), note.trim() || (type === "ingreso" ? "Ingreso" : "Egreso"));
-    onDone();
+    if (needsOwner) setAskingOwner(true);
+    else save();
   };
 
   return (
@@ -36,10 +48,22 @@ function MovementForm({ type, onClose, onDone }: { type: "ingreso" | "egreso"; o
           className="input"
         />
       </label>
+      {needsOwner && (
+        <p className="rounded-2xl bg-blue-50 px-4 py-3 text-sm text-blue-700">Los egresos de caja necesitan la autorización del dueño con su PIN.</p>
+      )}
       <div className="flex justify-end gap-3">
         <button type="button" onClick={onClose} className="btn btn-ghost">Cancelar</button>
-        <button disabled={!(Number(amount) > 0)} className="btn btn-primary">Registrar {type}</button>
+        <button disabled={!(Number(amount) > 0)} className="btn btn-primary">
+          {needsOwner ? "Pedir autorización" : `Registrar ${type}`}
+        </button>
       </div>
+      {askingOwner && (
+        <OwnerPinModal
+          action={`Egreso de ${formatMoney(Number(amount))}${note.trim() ? ` · ${note.trim()}` : ""}`}
+          onClose={() => setAskingOwner(false)}
+          onAuthorized={save}
+        />
+      )}
     </form>
   );
 }
@@ -61,7 +85,11 @@ export default function Cash() {
   const cash = useStore((s) => s.cash);
   const sales = useStore((s) => s.sales);
   const customerMovements = useStore((s) => s.customerMovements);
+  const users = useStore((s) => s.users);
+  const user = useCurrentUser();
   const { openCash, closeCash } = useStore.getState();
+  // El cajero cierra "a ciegas": cuenta el efectivo sin saber cuánto debería haber. Los números los ve el dueño.
+  const isAdmin = user?.role === "admin";
 
   const [modal, setModal] = useState<"ingreso" | "egreso" | "close" | null>(null);
   const [opening, setOpening] = useState("15000");
@@ -90,20 +118,22 @@ export default function Cash() {
     setCounted("");
     setToast({
       title: "Caja cerrada",
-      detail: diff === 0 ? "La caja cerró justa." : `Diferencia: ${formatMoney(diff)}`,
+      detail: !isAdmin
+        ? "El conteo quedó registrado para el dueño."
+        : diff === 0 ? "La caja cerró justa." : `Diferencia: ${formatMoney(diff)}`,
     });
   };
 
-  const history = (
+  const history = isAdmin && (
     <section className="card overflow-hidden">
       <div className="px-6 pb-3 pt-5">
         <h2 className="section-title">Cierres anteriores</h2>
         <p className="section-sub">Cómo cerró cada turno: lo esperado contra lo que se contó.</p>
       </div>
-      <table className="w-full text-sm">
+      <table className="w-full text-sm [&_td]:whitespace-nowrap">
         <thead className="border-y border-slate-100 bg-slate-50/70">
           <tr>
-            {["Turno", "Apertura", "Cierre", "Cobrado", "Efectivo esperado", "Efectivo contado", "Resultado"].map((h) => (
+            {["Turno", "Cerró", "Apertura", "Cierre", "Cobrado", "Efectivo esperado", "Efectivo contado", "Resultado"].map((h) => (
               <th key={h} className="th">{h}</th>
             ))}
           </tr>
@@ -114,6 +144,7 @@ export default function Cash() {
             return (
               <tr key={h.id} className="hover:bg-blue-50/40">
                 <td className="px-5 py-3 font-semibold text-slate-800">{h.id}</td>
+                <td className="px-5 py-3 font-medium text-slate-700">{userName(users, h.closedBy).split(" ")[0]}</td>
                 <td className="px-5 py-3 text-slate-500">{formatDateTime(h.openedAt)}</td>
                 <td className="px-5 py-3 text-slate-500">{formatDateTime(h.closedAt)}</td>
                 <td className="px-5 py-3 font-semibold">{formatMoney(h.collected)}</td>
@@ -128,7 +159,7 @@ export default function Cash() {
             );
           })}
           {cash.history.length === 0 && (
-            <tr><td colSpan={7} className="py-10 text-center text-slate-500">Todavía no hay cierres.</td></tr>
+            <tr><td colSpan={8} className="py-10 text-center text-slate-500">Todavía no hay cierres.</td></tr>
           )}
         </tbody>
       </table>
@@ -170,7 +201,7 @@ export default function Cash() {
             <span className="h-2 w-2 animate-pulse rounded-full bg-teal-500" /> Caja abierta
           </span>
           <span className="text-sm text-slate-500">
-            Turno {session.id} · desde las {formatTime(session.openedAt)} · {sum.salesCount} ventas
+            Turno {session.id} · abrió {userName(users, session.openedBy)} a las {formatTime(session.openedAt)} · {sum.salesCount} ventas
           </span>
         </div>
         <div className="flex gap-3">
@@ -186,15 +217,23 @@ export default function Cash() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <Stat label="Monto inicial" value={formatMoney(session.opening)} hint="Con lo que abriste" icon={Wallet} tile="from-blue-500 to-indigo-600" />
-        <Stat label="Total cobrado" value={formatMoney(sum.collected)} hint="Todos los medios de pago" icon={Receipt} tile="from-sky-400 to-blue-600" />
-        <Stat label="Efectivo en caja" value={formatMoney(sum.expected)} hint="Lo que debería haber en el cajón" icon={Banknote} tile="from-teal-400 to-teal-600" />
-        <Stat label="Fiado del turno" value={formatMoney(sum.byMethod.fiado)} hint="Vendido a cuenta, no cobrado" icon={HandCoins} tile="from-amber-400 to-orange-500" />
-      </div>
+      {isAdmin ? (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <Stat label="Monto inicial" value={formatMoney(session.opening)} hint="Con lo que abriste" icon={Wallet} tile="from-blue-500 to-indigo-600" />
+          <Stat label="Total cobrado" value={formatMoney(sum.collected)} hint="Todos los medios de pago" icon={Receipt} tile="from-sky-400 to-blue-600" />
+          <Stat label="Efectivo en caja" value={formatMoney(sum.expected)} hint="Lo que debería haber en el cajón" icon={Banknote} tile="from-teal-400 to-teal-600" />
+          <Stat label="Fiado del turno" value={formatMoney(sum.byMethod.fiado)} hint="Vendido a cuenta, no cobrado" icon={HandCoins} tile="from-amber-400 to-orange-500" />
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <Stat label="Monto inicial" value={formatMoney(session.opening)} hint="Con lo que se abrió la caja" icon={Wallet} tile="from-blue-500 to-indigo-600" />
+          <Stat label="Ventas del turno" value={String(sum.salesCount)} hint="Operaciones cobradas" icon={Receipt} tile="from-sky-400 to-blue-600" />
+          <Stat label="Fiado del turno" value={formatMoney(sum.byMethod.fiado)} hint="Vendido a cuenta, no cobrado" icon={HandCoins} tile="from-amber-400 to-orange-500" />
+        </div>
+      )}
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-        <section className="card p-6">
+      <div className={`grid grid-cols-1 gap-6 ${isAdmin ? "xl:grid-cols-2" : ""}`}>
+        {isAdmin && <section className="card p-6">
           <h2 className="section-title">Cobros por medio de pago</h2>
           <p className="section-sub mb-3">Lo que entró en este turno.</p>
           <ul className="divide-y divide-slate-100">
@@ -217,7 +256,7 @@ export default function Cash() {
             <div className="flex justify-between"><span className="text-slate-500">− Egresos</span><span>{formatMoney(sum.egresos)}</span></div>
             <div className="flex justify-between border-t border-slate-200 pt-3 text-base font-bold text-slate-900"><span>Efectivo en caja</span><span>{formatMoney(sum.expected)}</span></div>
           </div>
-        </section>
+        </section>}
 
         <section className="card p-6">
           <h2 className="section-title">Ingresos y egresos manuales</h2>
@@ -234,7 +273,11 @@ export default function Cash() {
                     </span>
                     <span>
                       <p className="text-sm font-semibold text-slate-800">{m.note}</p>
-                      <p className="text-xs text-slate-500">{formatTime(m.date)}</p>
+                      <p className="text-xs text-slate-500">
+                        {formatTime(m.date)}
+                        {m.userId && ` · ${userName(users, m.userId)}`}
+                        {m.authorizedBy && ` · autorizó ${userName(users, m.authorizedBy)}`}
+                      </p>
                     </span>
                   </span>
                   <span className={`text-base font-bold ${m.type === "ingreso" ? "text-teal-600" : "text-red-500"}`}>
@@ -267,17 +310,27 @@ export default function Cash() {
       )}
 
       {modal === "close" && (
-        <Modal title="Cerrar caja" subtitle="Contá el efectivo del cajón y compará." onClose={close}>
+        <Modal
+          title="Cerrar caja"
+          subtitle={isAdmin ? "Contá el efectivo del cajón y compará." : "Contá el efectivo del cajón e ingresá el total."}
+          onClose={close}
+        >
           <form onSubmit={onCloseCash} className="space-y-4">
-            <div className="rounded-3xl bg-gradient-to-br from-slate-900 via-[#0d2a55] to-blue-700 p-6 text-center text-white">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-200">Efectivo que debería haber</p>
-              <p className="mt-1 text-4xl font-extrabold tracking-tight">{formatMoney(sum.expected)}</p>
-            </div>
+            {isAdmin ? (
+              <div className="rounded-3xl bg-gradient-to-br from-slate-900 via-[#0d2a55] to-blue-700 p-6 text-center text-white">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-200">Efectivo que debería haber</p>
+                <p className="mt-1 text-4xl font-extrabold tracking-tight">{formatMoney(sum.expected)}</p>
+              </div>
+            ) : (
+              <p className="rounded-2xl bg-blue-50 px-4 py-3 text-sm text-blue-700">
+                Contá billetes y monedas con calma. El resultado del cierre lo revisa el dueño.
+              </p>
+            )}
             <label className="block">
               <span className="field-label">Efectivo que contaste ($)</span>
               <input autoFocus type="number" min={0} required value={counted} onChange={(e) => setCounted(e.target.value)} className="input py-3 text-2xl font-bold" />
             </label>
-            {counted !== "" && (
+            {isAdmin && counted !== "" && (
               <p className={`rounded-2xl px-4 py-3 text-sm font-semibold ${diff === 0 ? "bg-teal-50 text-teal-700" : diff < 0 ? "bg-red-50 text-red-600" : "bg-amber-50 text-amber-700"}`}>
                 {diff === 0 ? "La caja cierra justa." : diff < 0 ? `Faltan ${formatMoney(-diff)}` : `Sobran ${formatMoney(diff)}`}
               </p>

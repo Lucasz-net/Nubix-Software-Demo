@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Copy, MessageCircle, PackageCheck } from "lucide-react";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { useStore } from "../store/useStore";
 import Toast from "../components/Toast";
+import { openWhatsApp } from "../lib/whatsapp";
 import { formatMoney } from "../lib/format";
 import { categoryStyle } from "../lib/categories";
 
@@ -33,15 +33,7 @@ export default function Restock() {
     }
   };
 
-  const whatsapp = async () => {
-    const digits = phone.replace(/\D/g, "");
-    const url = `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
-    try {
-      await openUrl(url);
-    } catch {
-      window.open(url, "_blank"); // fuera de Tauri (navegador)
-    }
-  };
+  const whatsapp = () => openWhatsApp(phone, text);
 
   if (low.length === 0) {
     return (

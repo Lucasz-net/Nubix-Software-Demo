@@ -1,5 +1,25 @@
-import type { CashState, Customer, CustomerMovement, PayMethod, Product, Sale } from "../types";
+import type { CashState, Customer, CustomerMovement, FiscalSettings, PayMethod, Product, Sale, User } from "../types";
 import { sameDay } from "../lib/format";
+import { CONSUMIDOR_FINAL, MONOTRIBUTO_LIMITS, issue } from "../lib/invoice";
+
+// PINs a la vista en la pantalla de ingreso: es una demo.
+export const USERS: User[] = [
+  { id: "u1", name: "Roberto Díaz", role: "admin", pin: "1234" },
+  { id: "u2", name: "Juan Sosa", role: "cajero", pin: "1111" },
+];
+
+// Datos fiscales de ejemplo (CUIT inventado, con dígito verificador válido).
+export const FISCAL: FiscalSettings = {
+  businessName: "Kiosco Nubix",
+  cuit: "20284567898",
+  address: "Av. Colón 1234, Córdoba",
+  startDate: "2019-03-01",
+  condition: "monotributo",
+  category: "K",
+  annualLimit: MONOTRIBUTO_LIMITS["K"],
+  pos: 3,
+  autoInvoice: true,
+};
 
 export const CATEGORIES = [
   "Cigarrillos",
@@ -77,6 +97,11 @@ const HOUR_WEIGHTS = [3, 5, 4, 4, 6, 7, 5, 5, 6, 8, 10, 9, 6, 3];
 // Productos que no se venden hace más de 10 días (para mostrar el reporte de stock parado).
 const STALE = new Set(["p12", "p19", "p28"]);
 
+// De lunes a sábado atiende Juan; los domingos atiende el dueño. Hoy el turno abierto es de Juan.
+function whoAttended(date: Date, ago: number) {
+  return ago > 0 && date.getDay() === 0 ? "u1" : "u2";
+}
+
 function buildSales(products: Product[]): Sale[] {
   let seed = 42;
   const rnd = () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
@@ -121,6 +146,7 @@ function buildSales(products: Product[]): Sale[] {
         items,
         total: items.reduce((s, it) => s + it.qty * it.price, 0),
         payment: pickPayment(),
+        userId: whoAttended(date, ago),
       });
     }
   }
@@ -134,8 +160,23 @@ function buildSales(products: Product[]): Sale[] {
     const s = numbered[numbered.findIndex((x) => x.id === old[idx].id)];
     s.voidedAt = new Date(new Date(s.date).getTime() + minutes(8)).toISOString();
     s.voidReason = n === 0 ? "Error al cargar el producto" : "El cliente se arrepintió";
+    s.voidedBy = "u1";
   });
-  return numbered;
+  return withInvoices(numbered);
+}
+
+// Cada venta de ejemplo tiene su Factura C (el kiosco ya venía facturando: la numeración no arranca en 1),
+// y las anuladas su nota de crédito.
+function withInvoices(sales: Sale[]): Sale[] {
+  let seed = 7;
+  const rnd = () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
+  let number = 4820;
+  let ncNumber = 11;
+  return sales.map((s) => {
+    const sale: Sale = { ...s, invoice: { ...issue([], FISCAL, "factura", "C", CONSUMIDOR_FINAL, s.date, rnd), number: ++number } };
+    if (s.voidedAt) sale.creditNote = { ...issue([], FISCAL, "nc", "C", CONSUMIDOR_FINAL, s.voidedAt, rnd), number: ++ncNumber };
+    return sale;
+  });
 }
 
 function buildCustomers(): { customers: Customer[]; movements: CustomerMovement[] } {
@@ -159,6 +200,7 @@ function buildCustomers(): { customers: Customer[]; movements: CustomerMovement[
         type,
         amount,
         method: type === "pago" ? method : "fiado",
+        userId: "u2",
       });
     });
     return { id: d.id, name: d.name, phone: d.phone, balance };
@@ -177,6 +219,7 @@ function buildCash(sales: Sale[]): CashState {
       id: "C-0003",
       openedAt: openedAt.toISOString(),
       opening: 15000,
+      openedBy: "u2",
       movements: [
         {
           id: "cm1",
@@ -184,12 +227,14 @@ function buildCash(sales: Sale[]): CashState {
           type: "egreso",
           amount: 2500,
           note: "Compra de hielo",
+          userId: "u2",
+          authorizedBy: "u1",
         },
       ],
     },
     history: [
-      { id: "C-0002", openedAt: daysAgo(1, 7, 45).toISOString(), closedAt: daysAgo(1, 21, 30).toISOString(), opening: 15000, expected: 68300, counted: 68300, collected: 134900 },
-      { id: "C-0001", openedAt: daysAgo(2, 7, 50).toISOString(), closedAt: daysAgo(2, 21, 40).toISOString(), opening: 15000, expected: 72850, counted: 72350, collected: 141200 },
+      { id: "C-0002", openedAt: daysAgo(1, 7, 45).toISOString(), closedAt: daysAgo(1, 21, 30).toISOString(), opening: 15000, expected: 68300, counted: 68300, collected: 134900, openedBy: "u2", closedBy: "u2" },
+      { id: "C-0001", openedAt: daysAgo(2, 7, 50).toISOString(), closedAt: daysAgo(2, 21, 40).toISOString(), opening: 15000, expected: 72850, counted: 72350, collected: 141200, openedBy: "u2", closedBy: "u2" },
     ],
   };
 }
@@ -198,5 +243,5 @@ export function createSeed() {
   const products = buildProducts();
   const sales = buildSales(products);
   const { customers, movements } = buildCustomers();
-  return { products, sales, customers, customerMovements: movements, cash: buildCash(sales) };
+  return { users: USERS, products, sales, customers, customerMovements: movements, cash: buildCash(sales), fiscal: { ...FISCAL } };
 }

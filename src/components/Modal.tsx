@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { X } from "lucide-react";
 
@@ -10,12 +10,24 @@ interface Props {
   wide?: boolean;
 }
 
+// Modales abiertos, del más viejo al más nuevo: Escape cierra solo el de arriba
+// (ej: el PIN del dueño encima del formulario de egreso).
+const stack: object[] = [];
+
 export default function Modal({ title, subtitle, onClose, children, wide }: Props) {
+  const [id] = useState(() => ({}));
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    stack.push(id);
+    return () => {
+      stack.splice(stack.indexOf(id), 1);
+    };
+  }, [id]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && stack[stack.length - 1] === id && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [id, onClose]);
 
   return (
     <div

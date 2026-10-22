@@ -1,33 +1,45 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
+import type { PersistStorage } from "zustand/middleware";
 import type {
   CartItem,
   CashState,
   Customer,
   CustomerMovement,
+  FiscalSettings,
+  Invoice,
+  InvoiceTarget,
   PayMethod,
   Product,
   Sale,
   Screen,
+  User,
 } from "../types";
 import { createSeed } from "../data/mock";
 import { newPrice } from "../lib/pricing";
 import type { Rounding } from "../lib/pricing";
 import { summarizeSession } from "../lib/cash";
+import { HOME } from "../lib/roles";
+import { CONSUMIDOR_FINAL, issue, letterFor } from "../lib/invoice";
 
 interface State {
   screen: Screen;
+  users: User[];
+  currentUserId: string | null; // no se guarda: al abrir la app hay que ingresar de nuevo
   products: Product[];
   sales: Sale[];
   customers: Customer[];
   customerMovements: CustomerMovement[];
   cash: CashState;
+  fiscal: FiscalSettings;
   cart: CartItem[];
 
   setScreen: (s: Screen) => void;
   resetDemo: () => void;
+  login: (userId: string) => void;
+  logout: () => void;
 
-  addProduct: (p: Omit<Product, "id">) => void;
+  addProduct: (p: Omit<Product, "id">) => string; // devuelve el id nuevo
   updateProduct: (p: Product) => void;
   deleteProduct: (id: string) => void;
   adjustPrices: (opts: { percent: number; category: string | null; rounding: Rounding }) => number;
@@ -36,16 +48,36 @@ interface State {
   addToCart: (productId: string) => void;
   changeQty: (productId: string, delta: number) => void;
   removeFromCart: (productId: string) => void;
-  checkout: (method: PayMethod, customerId?: string) => Sale | null;
+  checkout: (method: PayMethod, customerId?: string, target?: InvoiceTarget) => Sale | null;
+  invoiceSale: (saleId: string, target: InvoiceTarget) => Invoice | null;
+  updateFiscal: (fiscal: FiscalSettings) => void;
 
   voidSale: (saleId: string, reason: string) => { ok: true } | { ok: false; error: string };
 
   openCash: (opening: number) => void;
   closeCash: (counted: number) => void;
-  addCashMovement: (type: "ingreso" | "egreso", amount: number, note: string) => void;
+  addCashMovement: (type: "ingreso" | "egreso", amount: number, note: string, authorizedBy?: string) => void;
 
   addCustomer: (name: string, phone: string) => void;
   registerPayment: (customerId: string, amount: number, method: PayMethod) => boolean;
+}
+
+type Persisted = Pick<State, "users" | "products" | "sales" | "customers" | "customerMovements" | "cash" | "fiscal">;
+
+// persist guarda en cada set(), también al cambiar de pantalla o tocar el carrito. Si los datos de negocio
+// no cambiaron (mismas referencias), no vuelve a serializar y escribir los ~270 KB en localStorage.
+function skipUnchanged<S extends object>(storage: PersistStorage<S> | undefined): PersistStorage<S> | undefined {
+  if (!storage) return storage;
+  let last: S | null = null;
+  return {
+    ...storage,
+    setItem: (name, value) => {
+      const prev = last;
+      last = value.state;
+      const same = prev && (Object.keys(value.state) as (keyof S)[]).every((k) => value.state[k] === prev[k]);
+      if (!same) return storage.setItem(name, value);
+    },
+  };
 }
 
 export const useStore = create<State>()(
@@ -53,13 +85,22 @@ export const useStore = create<State>()(
     (set, get) => ({
       screen: "dashboard",
       cart: [],
+      currentUserId: null,
       ...createSeed(),
 
       setScreen: (screen) => set({ screen }),
       resetDemo: () => set({ ...createSeed(), cart: [] }),
+      login: (userId) => {
+        const user = get().users.find((u) => u.id === userId);
+        if (user) set({ currentUserId: user.id, screen: HOME[user.role], cart: [] });
+      },
+      logout: () => set({ currentUserId: null, cart: [] }),
 
-      addProduct: (p) =>
-        set((s) => ({ products: [{ ...p, id: crypto.randomUUID() }, ...s.products] })),
+      addProduct: (p) => {
+        const id = crypto.randomUUID();
+        set((s) => ({ products: [{ ...p, id }, ...s.products] }));
+        return id;
+      },
       updateProduct: (p) =>
         set((s) => ({ products: s.products.map((x) => (x.id === p.id ? p : x)) })),
       deleteProduct: (id) =>
@@ -109,8 +150,8 @@ export const useStore = create<State>()(
       removeFromCart: (productId) =>
         set((s) => ({ cart: s.cart.filter((c) => c.productId !== productId) })),
 
-      checkout: (method, customerId) => {
-        const { cart, products, cash, sales } = get();
+      checkout: (method, customerId, target = CONSUMIDOR_FINAL) => {
+        const { cart, products, cash, sales, fiscal, customers } = get();
         if (!cash.current || cart.length === 0) return null;
         if (method === "fiado" && !customerId) return null;
 
@@ -126,7 +167,14 @@ export const useStore = create<State>()(
           total,
           payment: method,
           customerId: method === "fiado" ? customerId : undefined,
+          userId: get().currentUserId ?? undefined,
         };
+        if (fiscal.autoInvoice) {
+          // El fiado a un cliente de la libreta sale a su nombre (sigue siendo consumidor final).
+          const fiadoName = method === "fiado" ? customers.find((c) => c.id === customerId)?.name : undefined;
+          const to = target.docType === 99 && fiadoName ? { ...target, customerName: fiadoName } : target;
+          sale.invoice = issue(sales, fiscal, "factura", letterFor(fiscal, to), to, sale.date);
+        }
 
         set((s) => ({
           sales: [...s.sales, sale],
@@ -150,6 +198,7 @@ export const useStore = create<State>()(
                     type: "compra",
                     amount: total,
                     method: "fiado",
+                    userId: sale.userId,
                   },
                 ]
               : s.customerMovements,
@@ -171,8 +220,13 @@ export const useStore = create<State>()(
         }
 
         const now = new Date().toISOString();
+        const userId = get().currentUserId ?? undefined;
+        // Si la venta estaba facturada, se emite sola la nota de crédito que la anula.
+        const creditNote = sale.invoice
+          ? issue(sales, get().fiscal, "nc", sale.invoice.letter, sale.invoice, now)
+          : undefined;
         set((s) => ({
-          sales: s.sales.map((x) => (x.id === saleId ? { ...x, voidedAt: now, voidReason: reason } : x)),
+          sales: s.sales.map((x) => (x.id === saleId ? { ...x, voidedAt: now, voidReason: reason, voidedBy: userId, creditNote } : x)),
           products: s.products.map((p) => {
             const item = sale.items.find((i) => i.productId === p.id);
             return item ? { ...p, stock: p.stock + item.qty } : p;
@@ -194,6 +248,7 @@ export const useStore = create<State>()(
                     type: "anulacion",
                     amount: sale.total,
                     method: "fiado",
+                    userId,
                   },
                 ]
               : s.customerMovements,
@@ -205,7 +260,7 @@ export const useStore = create<State>()(
                     ...s.cash.current,
                     movements: [
                       ...s.cash.current.movements,
-                      { id: crypto.randomUUID(), date: now, type: "egreso", amount: sale.total, note: `Devolución ${sale.id}` },
+                      { id: crypto.randomUUID(), date: now, type: "egreso", amount: sale.total, note: `Devolución ${sale.id}`, userId },
                     ],
                   },
                 }
@@ -225,6 +280,7 @@ export const useStore = create<State>()(
                 openedAt: new Date().toISOString(),
                 opening,
                 movements: [],
+                openedBy: s.currentUserId ?? undefined,
               },
             },
           };
@@ -246,13 +302,15 @@ export const useStore = create<State>()(
                   expected: sum.expected,
                   counted,
                   collected: sum.collected,
+                  openedBy: current.openedBy,
+                  closedBy: s.currentUserId ?? undefined,
                 },
                 ...s.cash.history,
               ],
             },
           };
         }),
-      addCashMovement: (type, amount, note) =>
+      addCashMovement: (type, amount, note, authorizedBy) =>
         set((s) => {
           if (!s.cash.current) return s;
           return {
@@ -262,12 +320,30 @@ export const useStore = create<State>()(
                 ...s.cash.current,
                 movements: [
                   ...s.cash.current.movements,
-                  { id: crypto.randomUUID(), date: new Date().toISOString(), type, amount, note },
+                  {
+                    id: crypto.randomUUID(),
+                    date: new Date().toISOString(),
+                    type,
+                    amount,
+                    note,
+                    userId: s.currentUserId ?? undefined,
+                    authorizedBy,
+                  },
                 ],
               },
             },
           };
         }),
+
+      invoiceSale: (saleId, target) => {
+        const { sales, fiscal } = get();
+        const sale = sales.find((x) => x.id === saleId);
+        if (!sale || sale.invoice || sale.voidedAt) return null;
+        const invoice = issue(sales, fiscal, "factura", letterFor(fiscal, target), target, new Date().toISOString());
+        set((s) => ({ sales: s.sales.map((x) => (x.id === saleId ? { ...x, invoice } : x)) }));
+        return invoice;
+      },
+      updateFiscal: (fiscal) => set({ fiscal }),
 
       addCustomer: (name, phone) =>
         set((s) => ({
@@ -290,6 +366,7 @@ export const useStore = create<State>()(
               type: "pago",
               amount: paid,
               method,
+              userId: s.currentUserId ?? undefined,
             },
           ],
         }));
@@ -298,15 +375,20 @@ export const useStore = create<State>()(
     }),
     {
       name: "nubix-demo-v2",
-      version: 2, // v2: ventas de 30 días + anulaciones (se descartan datos viejos de la demo)
-      // Solo se guardan los datos de negocio, no el estado de UI.
-      partialize: (s) => ({
+      version: 5, // v5: facturación (v4: un solo cajero; v3: usuarios). Se descartan datos viejos de la demo
+      storage: skipUnchanged(createJSONStorage<Persisted>(() => localStorage)),
+      // Solo se guardan los datos de negocio, no el estado de UI ni la sesión.
+      partialize: (s): Persisted => ({
+        users: s.users,
         products: s.products,
         sales: s.sales,
         customers: s.customers,
         customerMovements: s.customerMovements,
         cash: s.cash,
+        fiscal: s.fiscal,
       }),
     },
   ),
 );
+
+export const useCurrentUser = () => useStore((s) => s.users.find((u) => u.id === s.currentUserId) ?? null);

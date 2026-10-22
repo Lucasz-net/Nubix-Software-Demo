@@ -1,5 +1,7 @@
-import { CalendarDays, User } from "lucide-react";
-import { useStore } from "../store/useStore";
+import { CalendarDays } from "lucide-react";
+import { useCurrentUser, useStore } from "../store/useStore";
+import Avatar from "./Avatar";
+import { ROLE_LABEL } from "../lib/roles";
 import { SCREEN_META } from "../lib/screens";
 import { formatTime } from "../lib/format";
 
@@ -7,6 +9,7 @@ export default function Header() {
   const screen = useStore((s) => s.screen);
   const setScreen = useStore((s) => s.setScreen);
   const session = useStore((s) => s.cash.current);
+  const user = useCurrentUser();
   const meta = SCREEN_META[screen];
   const today = new Date().toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" });
 
@@ -31,12 +34,13 @@ export default function Header() {
           <CalendarDays size={16} className="text-blue-600" />
           <span className="first-letter:uppercase">{today}</span>
         </span>
-        <span className="flex items-center gap-2 rounded-full bg-white/80 py-1.5 pl-1.5 pr-4 text-sm font-semibold text-slate-700 shadow-card">
-          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-blue-600 to-sky-400 text-white">
-            <User size={16} />
+        {user && (
+          <span className="flex items-center gap-2 rounded-full bg-white/80 py-1.5 pl-1.5 pr-4 text-sm font-semibold text-slate-700 shadow-card">
+            <Avatar user={user} size="h-8 w-8 text-xs" />
+            {user.name.split(" ")[0]}
+            <span className="font-medium text-slate-400">· {ROLE_LABEL[user.role]}</span>
           </span>
-          Mostrador
-        </span>
+        )}
       </div>
     </header>
   );

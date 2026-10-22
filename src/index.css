@@ -5,6 +5,9 @@
   Paleta: azul (blue), azul marino (slate, retintado), celeste (sky) y verde agua (teal).
   Se redefine "slate" como una escala de grises azulados para que toda la UI tome el tono marino.
 */
+/* Pantallas bajas (ej: 1366x768, típicas en un mostrador): se compacta la barra lateral. */
+@custom-variant short (@media (max-height: 820px));
+
 @theme {
   --font-sans: "Inter", ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
 
@@ -26,6 +29,11 @@
 
   --animate-pop: pop 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.2);
   --animate-rise: rise 0.35s ease-out;
+  --animate-shake: shake 0.35s ease-in-out;
+  @keyframes shake {
+    20%, 60% { transform: translateX(-8px); }
+    40%, 80% { transform: translateX(8px); }
+  }
   @keyframes pop {
     from { opacity: 0; transform: scale(0.94) translateY(8px); }
     to { opacity: 1; transform: none; }
@@ -55,6 +63,15 @@
   button { cursor: pointer; }
   button:disabled { cursor: not-allowed; }
   input[type="number"]::-webkit-inner-spin-button { opacity: 0.4; }
+}
+
+/* Impresión de comprobantes: solo se imprime .print-root (ver InvoiceModal). */
+.print-root { display: none; }
+@media print {
+  @page { margin: 6mm; }
+  body { background: #fff !important; }
+  body > *:not(.print-root) { display: none !important; }
+  .print-root { display: block; }
 }
 
 @layer components {

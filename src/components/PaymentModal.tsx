@@ -1,31 +1,65 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
+import { FileText } from "lucide-react";
 import { useStore } from "../store/useStore";
 import Modal from "./Modal";
 import { PAY_METHODS } from "../lib/payments";
 import { formatMoney } from "../lib/format";
-import type { PayMethod } from "../types";
+import { CONSUMIDOR_FINAL, cuitIsValid, letterFor, onlyDigits } from "../lib/invoice";
+import type { InvoiceTarget, PayMethod } from "../types";
 
 interface Props {
   total: number;
-  onConfirm: (method: PayMethod, opts: { customerId?: string; received?: number }) => void;
+  onConfirm: (method: PayMethod, opts: { customerId?: string; received?: number; target: InvoiceTarget }) => void;
   onClose: () => void;
 }
 
 const BILLS = [1000, 2000, 5000, 10000, 20000, 50000];
 
+// A quién se le factura. "A" solo existe para Responsable Inscripto.
+type Receiver = "cf" | "doc" | "A";
+const RECEIVERS: { id: Receiver; label: string }[] = [
+  { id: "cf", label: "Consumidor final" },
+  { id: "doc", label: "Con DNI o CUIT" },
+  { id: "A", label: "Empresa (Factura A)" },
+];
+
 export default function PaymentModal({ total, onConfirm, onClose }: Props) {
   const customers = useStore((s) => s.customers);
+  const fiscal = useStore((s) => s.fiscal);
   const [method, setMethod] = useState<PayMethod>("efectivo");
   const [received, setReceived] = useState("");
   const [customerId, setCustomerId] = useState("");
+  const [receiver, setReceiver] = useState<Receiver>("cf");
+  const [doc, setDoc] = useState("");
+  const [docName, setDocName] = useState("");
 
   const receivedNum = Number(received);
   const change = method === "efectivo" && receivedNum > 0 ? receivedNum - total : 0;
   const quick = BILLS.filter((b) => b >= total).slice(0, 3);
 
+  const digits = onlyDigits(doc);
+  const target: InvoiceTarget =
+    receiver === "cf"
+      ? CONSUMIDOR_FINAL
+      : { letter: receiver === "A" ? "A" : undefined, docType: digits.length === 11 ? 80 : 96, docNumber: digits, customerName: docName };
+  const letter = letterFor(fiscal, target);
+  // Un CUIT tiene 11 dígitos y dígito verificador; un DNI, 7 u 8 dígitos. La Factura A pide CUIT y razón social.
+  const docError = (() => {
+    if (receiver === "cf") return "";
+    if (digits === "") return receiver === "A" ? "Ingresá el CUIT de la empresa." : "Ingresá el DNI o CUIT.";
+    if (digits.length === 11) {
+      if (!cuitIsValid(digits)) return "El CUIT no es válido.";
+      return receiver === "A" && !docName.trim() ? "Falta la razón social." : "";
+    }
+    if (receiver === "A") return "La Factura A necesita un CUIT de 11 dígitos.";
+    return digits.length === 7 || digits.length === 8 ? "" : "El DNI tiene 7 u 8 dígitos.";
+  })();
+  const invoiceOk = !fiscal.autoInvoice || docError === "";
+
   const canConfirm =
-    method === "efectivo" ? received === "" || receivedNum >= total : method === "fiado" ? !!customerId : true;
+    invoiceOk &&
+    (method === "efectivo" ? received === "" || receivedNum >= total : method === "fiado" ? !!customerId : true);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -33,6 +67,7 @@ export default function PaymentModal({ total, onConfirm, onClose }: Props) {
     onConfirm(method, {
       customerId: method === "fiado" ? customerId : undefined,
       received: method === "efectivo" && receivedNum > 0 ? receivedNum : undefined,
+      target,
     });
   };
 
@@ -117,6 +152,50 @@ export default function PaymentModal({ total, onConfirm, onClose }: Props) {
               El monto se suma a su cuenta corriente. Los clientes nuevos se crean en "Clientes y Fiado".
             </span>
           </label>
+        )}
+
+        {fiscal.autoInvoice ? (
+          <div className="rounded-2xl border border-slate-200 p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <span className="field-label mb-0">Comprobante</span>
+              <span className="chip chip-info"><FileText size={13} /> Factura {letter}</span>
+            </div>
+            <div className="flex rounded-full bg-slate-100 p-1 text-xs font-semibold">
+              {RECEIVERS.filter((r) => r.id !== "A" || fiscal.condition === "ri").map((r) => (
+                <button
+                  type="button"
+                  key={r.id}
+                  onClick={() => setReceiver(r.id)}
+                  className={`flex-1 rounded-full px-3 py-1.5 transition ${receiver === r.id ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
+            {receiver !== "cf" && (
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <input
+                  autoFocus
+                  value={doc}
+                  onChange={(e) => setDoc(e.target.value)}
+                  inputMode="numeric"
+                  placeholder={receiver === "A" ? "CUIT de la empresa" : "DNI o CUIT"}
+                  aria-label={receiver === "A" ? "CUIT de la empresa" : "DNI o CUIT"}
+                  className="input"
+                />
+                <input
+                  value={docName}
+                  onChange={(e) => setDocName(e.target.value)}
+                  placeholder={receiver === "A" ? "Razón social" : "Nombre (opcional)"}
+                  aria-label={receiver === "A" ? "Razón social" : "Nombre"}
+                  className="input"
+                />
+                {doc !== "" && docError && <p className="col-span-2 text-xs font-semibold text-red-600">{docError}</p>}
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-xs text-slate-500">La facturación automática está apagada: la venta se puede facturar después desde Ventas.</p>
         )}
 
         <div className="flex justify-end gap-3 pt-1">

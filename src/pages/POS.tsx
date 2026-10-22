@@ -1,24 +1,33 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Minus, Plus, ReceiptText, ScanBarcode, Search, Trash2, Wallet } from "lucide-react";
-import { useStore } from "../store/useStore";
+import { useCurrentUser, useStore } from "../store/useStore";
 import PaymentModal from "../components/PaymentModal";
+import Modal from "../components/Modal";
+import OwnerPinModal from "../components/OwnerPinModal";
+import ProductForm from "../components/ProductForm";
+import InvoiceModal from "../components/InvoiceModal";
 import Toast from "../components/Toast";
 import { formatMoney, splitIva } from "../lib/format";
 import { PAY_LABEL } from "../lib/payments";
 import { categoryStyle } from "../lib/categories";
-import type { PayMethod } from "../types";
+import { formatInvoiceNumber } from "../lib/invoice";
+import type { InvoiceTarget, PayMethod } from "../types";
 
 export default function POS() {
   const products = useStore((s) => s.products);
   const cart = useStore((s) => s.cart);
   const cashOpen = useStore((s) => !!s.cash.current);
   const { addToCart, changeQty, removeFromCart, checkout, setScreen } = useStore.getState();
+  const isAdmin = useCurrentUser()?.role === "admin";
 
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<string | null>(null);
   const [payOpen, setPayOpen] = useState(false);
   const [notFound, setNotFound] = useState(false);
-  const [toast, setToast] = useState<{ title: string; detail?: string } | null>(null);
+  const [toast, setToast] = useState<{ title: string; detail?: string; invoiceOf?: string } | null>(null);
+  const [invoiceOf, setInvoiceOf] = useState<string | null>(null); // venta cuya factura se está viendo
+  // Código escaneado que no está cargado: se da de alta en el momento (el cajero necesita el PIN del dueño).
+  const [newProduct, setNewProduct] = useState<{ code: string; authorized: boolean } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const categories = useMemo(() => [...new Set(products.map((p) => p.category))], [products]);
@@ -50,12 +59,12 @@ export default function POS() {
         searchRef.current?.select();
       } else if (e.key === "F9") {
         e.preventDefault();
-        if (canCharge) setPayOpen(true);
+        if (canCharge && !newProduct && !invoiceOf) setPayOpen(true);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [canCharge]);
+  }, [canCharge, newProduct, invoiceOf]);
 
   useEffect(() => {
     if (!notFound) return;
@@ -72,19 +81,40 @@ export default function POS() {
     if (target) {
       addToCart(target.id);
       setQuery("");
+    } else if (/^\d{6,}$/.test(q)) {
+      setNewProduct({ code: q, authorized: isAdmin });
     } else {
       setNotFound(true);
     }
   };
 
-  const handlePay = (method: PayMethod, opts: { customerId?: string; received?: number }) => {
-    const sale = checkout(method, opts.customerId);
+  // Se limpia la búsqueda: si no, el próximo escaneo se pegaría al código anterior.
+  const closeNewProduct = () => {
+    setNewProduct(null);
+    setQuery("");
+    searchRef.current?.focus();
+  };
+
+  const onProductCreated = (productId: string) => {
+    const product = useStore.getState().products.find((p) => p.id === productId);
+    closeNewProduct();
+    if (!product) return;
+    if (product.stock > 0) addToCart(product.id);
+    setToast({
+      title: "Producto cargado",
+      detail: product.stock > 0 ? `${product.name} · agregado al ticket` : `${product.name} · sin stock, no se agregó al ticket`,
+    });
+  };
+
+  const handlePay = (method: PayMethod, opts: { customerId?: string; received?: number; target: InvoiceTarget }) => {
+    const sale = checkout(method, opts.customerId, opts.target);
     setPayOpen(false);
     if (!sale) return;
     const change = method === "efectivo" && opts.received ? opts.received - sale.total : 0;
     setToast({
-      title: `Venta ${sale.id} cobrada`,
+      title: sale.invoice ? `Venta cobrada · Factura ${sale.invoice.letter} ${formatInvoiceNumber(sale.invoice)}` : `Venta ${sale.id} cobrada`,
       detail: `${PAY_LABEL[method]} · ${formatMoney(sale.total)}${change > 0 ? ` · Vuelto ${formatMoney(change)}` : ""}`,
+      invoiceOf: sale.invoice ? sale.id : undefined,
     });
     searchRef.current?.focus();
   };
@@ -253,7 +283,32 @@ export default function POS() {
       </aside>
 
       {payOpen && <PaymentModal total={total} onConfirm={handlePay} onClose={() => setPayOpen(false)} />}
-      {toast && <Toast title={toast.title} detail={toast.detail} onDone={() => setToast(null)} />}
+      {newProduct && !newProduct.authorized && (
+        <OwnerPinModal
+          action={`Cargar el producto con código ${newProduct.code}`}
+          onClose={closeNewProduct}
+          onAuthorized={() => setNewProduct({ ...newProduct, authorized: true })}
+        />
+      )}
+      {newProduct?.authorized && (
+        <Modal title="Producto nuevo" subtitle={`El código ${newProduct.code} no está cargado. Completá los datos y se agrega al ticket.`} onClose={closeNewProduct}>
+          <ProductForm
+            product={null}
+            initial={{ barcode: newProduct.code, stock: 1 }}
+            onClose={closeNewProduct}
+            onDone={(_, id) => onProductCreated(id)}
+          />
+        </Modal>
+      )}
+      {invoiceOf && <InvoiceModal saleId={invoiceOf} kind="factura" onClose={() => { setInvoiceOf(null); searchRef.current?.focus(); }} />}
+      {toast && (
+        <Toast
+          title={toast.title}
+          detail={toast.detail}
+          action={toast.invoiceOf ? { label: "Ver factura", onClick: () => setInvoiceOf(toast.invoiceOf!) } : undefined}
+          onDone={() => setToast(null)}
+        />
+      )}
     </div>
   );
 }
