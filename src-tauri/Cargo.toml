@@ -1,6 +1,6 @@
 [package]
 name = "nubix-software"
-version = "0.5.0"
+version = "0.5.1"
 description = "Nubix Software: punto de venta e inventario para kioscos"
 authors = ["Nubix Software"]
 edition = "2024"

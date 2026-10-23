@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Copy, MessageCircle, PackageCheck } from "lucide-react";
 import { useStore } from "../store/useStore";
 import Toast from "../components/Toast";
+import NumberInput from "../components/NumberInput";
 import { openWhatsApp } from "../lib/whatsapp";
 import { formatMoney } from "../lib/format";
 import { categoryStyle } from "../lib/categories";
@@ -84,11 +85,10 @@ export default function Restock() {
                     </span>
                   </td>
                   <td className="px-5 py-3">
-                    <input
-                      type="number"
+                    <NumberInput
                       min={0}
                       value={qty}
-                      onChange={(e) => setQtys((q) => ({ ...q, [p.id]: Math.max(0, Number(e.target.value)) }))}
+                      onChange={(v) => setQtys((q) => ({ ...q, [p.id]: Math.max(0, v) }))}
                       className="input w-24 text-center font-bold"
                     />
                   </td>

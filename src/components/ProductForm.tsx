@@ -1,6 +1,7 @@
 import { useState } from "react";
-import type { ChangeEvent, FormEvent } from "react";
+import type { FormEvent } from "react";
 import { useStore } from "../store/useStore";
+import NumberInput from "./NumberInput";
 import { CATEGORIES } from "../data/mock";
 import { formatMoney, margin } from "../lib/format";
 import type { Product } from "../types";
@@ -34,11 +35,10 @@ export default function ProductForm({ product, initial, onClose, onDone }: Props
   const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
   const num = (key: "cost" | "price" | "stock" | "minStock") => ({
-    type: "number" as const,
     min: 0,
     required: true,
     value: form[key],
-    onChange: (e: ChangeEvent<HTMLInputElement>) => set(key, Number(e.target.value)),
+    onChange: (v: number) => set(key, v),
     className: "input",
   });
 
@@ -82,14 +82,14 @@ export default function ProductForm({ product, initial, onClose, onDone }: Props
         <span className="field-label">Nombre del producto</span>
         <input required autoFocus={!!initial?.barcode} value={form.name} onChange={(e) => set("name", e.target.value)} className="input" />
       </label>
-      <label><span className="field-label">Precio de costo ($)</span><input {...num("cost")} /></label>
-      <label><span className="field-label">Precio de venta ($)</span><input {...num("price")} /></label>
+      <label><span className="field-label">Precio de costo ($)</span><NumberInput {...num("cost")} /></label>
+      <label><span className="field-label">Precio de venta ($)</span><NumberInput {...num("price")} /></label>
       <div className="col-span-2 flex items-center justify-between rounded-2xl bg-gradient-to-r from-blue-50 to-teal-50 px-5 py-3 text-sm">
         <span className="text-slate-600">Ganancia por unidad <b className="ml-1 text-slate-900">{formatMoney(form.price - form.cost)}</b></span>
         <span className={`chip ${m < 15 ? "chip-warn" : "chip-ok"}`}>Margen {m.toFixed(0)}%</span>
       </div>
-      <label><span className="field-label">Stock actual (unidades)</span><input {...num("stock")} /></label>
-      <label><span className="field-label">Avisar cuando queden</span><input {...num("minStock")} /></label>
+      <label><span className="field-label">Stock actual (unidades)</span><NumberInput {...num("stock")} /></label>
+      <label><span className="field-label">Avisar cuando queden</span><NumberInput {...num("minStock")} /></label>
       <div className="col-span-2 mt-2 flex justify-end gap-3">
         <button type="button" onClick={onClose} className="btn btn-ghost">Cancelar</button>
         <button disabled={!!duplicate} className="btn btn-primary">{product ? "Guardar cambios" : "Crear producto"}</button>

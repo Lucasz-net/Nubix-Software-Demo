@@ -4,6 +4,7 @@ import { AlertTriangle, ChevronRight, FileMinus, FileText, Gauge, Info, Landmark
 import type { LucideIcon } from "lucide-react";
 import { useStore } from "../store/useStore";
 import Modal from "../components/Modal";
+import NumberInput from "../components/NumberInput";
 import Toast from "../components/Toast";
 import InvoiceModal from "../components/InvoiceModal";
 import { formatDateTime, formatMoney, splitIva } from "../lib/format";
@@ -110,7 +111,7 @@ function FiscalForm({ onClose, onDone }: { onClose: () => void; onDone: () => vo
           </label>
           <label>
             <span className="field-label">Tope anual de la categoría ($)</span>
-            <input required type="number" min={1} value={form.annualLimit} onChange={(e) => set("annualLimit", Number(e.target.value))} className="input" />
+            <NumberInput required min={1} value={form.annualLimit} onChange={(v) => set("annualLimit", v)} className="input" />
           </label>
           <p className="col-span-2 -mt-2 text-xs text-slate-500">
             El tope se completa con un valor de referencia. ARCA lo actualiza dos veces por año: corregilo con el vigente.
@@ -120,7 +121,7 @@ function FiscalForm({ onClose, onDone }: { onClose: () => void; onDone: () => vo
 
       <label>
         <span className="field-label">Punto de venta</span>
-        <input required type="number" min={1} max={99999} value={form.pos} onChange={(e) => set("pos", Number(e.target.value))} className="input" />
+        <NumberInput required min={1} max={99999} value={form.pos} onChange={(v) => set("pos", v)} className="input" />
       </label>
       <label className="flex items-center gap-3 self-end rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm font-medium text-slate-700">
         <input type="checkbox" checked={form.autoInvoice} onChange={(e) => set("autoInvoice", e.target.checked)} className="h-4 w-4 accent-blue-600" />
